@@ -496,109 +496,213 @@ def action_devin_auth(email, password, totp_secret, signup,
 # ─── GUI ─────────────────────────────────────────────────────
 
 class App(tk.Tk):
+    # ─── GitHub 深色主题配色 ──────────────────────────────────
+    BG       = "#0d1117"     # 主背景
+    BG_CARD  = "#161b22"     # 卡片/面板背景
+    BORDER   = "#30363d"     # 边框
+    FG       = "#c9d1d9"     # 主文字
+    FG_DIM   = "#8b949e"     # 次要文字
+    GREEN    = "#238636"     # 主按钮
+    GREEN_HV = "#2ea043"     # 主按钮悬停
+    BTN2     = "#21262d"     # 次按钮
+    BTN2_HV  = "#30363d"     # 次按钮悬停
+    INPUT_BG = "#0d1117"     # 输入框背景
+    FOCUS    = "#58a6ff"     # 聚焦/链接
+    OK       = "#3fb950"     # 成功
+    ERR      = "#f85149"     # 错误
+
     def __init__(self):
         super().__init__()
         self.title("GitHub & Devin 自动化工具箱")
-        self.geometry("720x680")
+        self.geometry("720x720")
         self.resizable(True, True)
+        self.configure(bg=self.BG)
 
         # Detect browser
         self.browser_type, self.browser_path = detect_browser()
 
+        self._setup_theme()
         self._build_ui()
         self._check_deps()
 
+    # ─── 深色主题配置 ─────────────────────────────────────────
+    def _setup_theme(self):
+        style = ttk.Style(self)
+        style.theme_use("clam")
+
+        # 全局默认
+        style.configure(".", background=self.BG, foreground=self.FG,
+                         borderwidth=0, focuscolor=self.FOCUS,
+                         font=("Segoe UI", 10))
+
+        # Frame / LabelFrame
+        style.configure("TFrame", background=self.BG)
+        style.configure("Card.TFrame", background=self.BG_CARD)
+        style.configure("TLabelframe", background=self.BG_CARD,
+                         foreground=self.FG_DIM, borderwidth=1,
+                         relief="solid")
+        style.configure("TLabelframe.Label", background=self.BG_CARD,
+                         foreground=self.FG_DIM, font=("Segoe UI", 9, "bold"))
+
+        # Label
+        style.configure("TLabel", background=self.BG_CARD, foreground=self.FG)
+        style.configure("Dim.TLabel", foreground=self.FG_DIM)
+        style.configure("Title.TLabel", font=("Segoe UI", 16, "bold"),
+                         foreground="#f0f6fc", background=self.BG)
+        style.configure("Subtitle.TLabel", font=("Segoe UI", 10),
+                         foreground=self.FG_DIM, background=self.BG)
+        style.configure("Browser.TLabel", foreground=self.FG_DIM,
+                         background=self.BG_CARD)
+
+        # Entry
+        style.configure("TEntry", fieldbackground=self.INPUT_BG,
+                         foreground=self.FG, borderwidth=1, relief="solid",
+                         insertcolor=self.FG)
+        style.map("TEntry",
+                  bordercolor=[("focus", self.FOCUS), ("!focus", self.BORDER)])
+
+        # Spinbox
+        style.configure("TSpinbox", fieldbackground=self.INPUT_BG,
+                         foreground=self.FG, borderwidth=1, relief="solid",
+                         arrowcolor=self.FG_DIM)
+
+        # Checkbutton
+        style.configure("TCheckbutton", background=self.BG_CARD,
+                         foreground=self.FG, indicatorcolor=self.INPUT_BG)
+        style.map("TCheckbutton",
+                  indicatorcolor=[("selected", self.GREEN)])
+
+        # ─── 按钮 ─────────────
+        # 主按钮（绿色）
+        style.configure("Green.TButton",
+                         background=self.GREEN, foreground="#ffffff",
+                         font=("Segoe UI", 10, "bold"), borderwidth=0,
+                         padding=(12, 7))
+        style.map("Green.TButton",
+                  background=[("active", self.GREEN_HV),
+                              ("disabled", "#21262d")],
+                  foreground=[("disabled", "#484f58")])
+
+        # 次按钮（灰色）
+        style.configure("Gray.TButton",
+                         background=self.BTN2, foreground=self.FG,
+                         font=("Segoe UI", 10), borderwidth=1,
+                         padding=(12, 7))
+        style.map("Gray.TButton",
+                  background=[("active", self.BTN2_HV),
+                              ("disabled", "#21262d")],
+                  foreground=[("disabled", "#484f58")])
+
     def _build_ui(self):
+        # ─── 标题 ─────────────
+        ttk.Label(self, text="GitHub & Devin 自动化工具箱",
+                  style="Title.TLabel").pack(pady=(14, 2))
+        ttk.Label(self, text="PAT 创建  |  批量仓库  |  Devin 注册/登录  |  一键可视化",
+                  style="Subtitle.TLabel").pack(pady=(0, 10))
+
         # ─── 顶部：凭据输入 ─────────────
-        cred_frame = ttk.LabelFrame(self, text="GitHub 账号", padding=10)
-        cred_frame.pack(fill="x", padx=10, pady=(10, 5))
+        cred_frame = ttk.LabelFrame(self, text=" GITHUB 账号 ", padding=12)
+        cred_frame.pack(fill="x", padx=14, pady=(0, 6))
 
-        row = ttk.Frame(cred_frame)
-        row.pack(fill="x", pady=2)
-        ttk.Label(row, text="邮箱:", width=10).pack(side="left")
-        self.email_var = tk.StringVar()
-        ttk.Entry(row, textvariable=self.email_var, width=45).pack(side="left", fill="x", expand=True)
-
-        row = ttk.Frame(cred_frame)
-        row.pack(fill="x", pady=2)
-        ttk.Label(row, text="密码:", width=10).pack(side="left")
-        self.password_var = tk.StringVar()
-        ttk.Entry(row, textvariable=self.password_var, show="*", width=45).pack(side="left", fill="x", expand=True)
-
-        row = ttk.Frame(cred_frame)
-        row.pack(fill="x", pady=2)
-        ttk.Label(row, text="TOTP 密钥:", width=10).pack(side="left")
-        self.totp_var = tk.StringVar()
-        ttk.Entry(row, textvariable=self.totp_var, show="*", width=45).pack(side="left", fill="x", expand=True)
+        for label_text, attr, show in [("邮箱", "email_var", ""),
+                                        ("密码", "password_var", "*"),
+                                        ("TOTP 密钥", "totp_var", "*")]:
+            row = ttk.Frame(cred_frame, style="Card.TFrame")
+            row.pack(fill="x", pady=3)
+            ttk.Label(row, text=f"{label_text}:", width=10).pack(side="left")
+            var = tk.StringVar()
+            setattr(self, attr, var)
+            e = ttk.Entry(row, textvariable=var, width=48)
+            if show:
+                e.configure(show=show)
+            e.pack(side="left", fill="x", expand=True, padx=(4, 0))
 
         # ─── 浏览器信息 ─────────────
-        browser_frame = ttk.LabelFrame(self, text="浏览器", padding=5)
-        browser_frame.pack(fill="x", padx=10, pady=5)
+        browser_frame = ttk.LabelFrame(self, text=" 浏览器 ", padding=6)
+        browser_frame.pack(fill="x", padx=14, pady=4)
 
         if self.browser_path:
             bname = "Edge" if "edge" in (self.browser_path or "").lower() else "Chrome"
             info = f"{bname} — {self.browser_path}"
         else:
             info = "未检测到 Edge/Chrome，将使用 Playwright 内置 Chromium"
-        self.browser_label = ttk.Label(browser_frame, text=info, foreground="gray")
+        self.browser_label = ttk.Label(browser_frame, text=info,
+                                        style="Browser.TLabel")
         self.browser_label.pack(anchor="w")
 
         # ─── 功能按钮 ─────────────
-        btn_frame = ttk.LabelFrame(self, text="功能", padding=10)
-        btn_frame.pack(fill="x", padx=10, pady=5)
+        btn_frame = ttk.LabelFrame(self, text=" 功能 ", padding=10)
+        btn_frame.pack(fill="x", padx=14, pady=4)
 
-        row1 = ttk.Frame(btn_frame)
-        row1.pack(fill="x", pady=3)
-        self.btn_pat = ttk.Button(row1, text="创建 PAT", command=self._on_create_pat)
+        row1 = ttk.Frame(btn_frame, style="Card.TFrame")
+        row1.pack(fill="x", pady=4)
+        self.btn_pat = ttk.Button(row1, text="创建 PAT", style="Green.TButton",
+                                   command=self._on_create_pat)
         self.btn_pat.pack(side="left", padx=3, expand=True, fill="x")
-        self.btn_devin_signup = ttk.Button(row1, text="注册 Devin", command=self._on_devin_signup)
+        self.btn_devin_signup = ttk.Button(row1, text="注册 Devin", style="Green.TButton",
+                                            command=self._on_devin_signup)
         self.btn_devin_signup.pack(side="left", padx=3, expand=True, fill="x")
-        self.btn_devin_login = ttk.Button(row1, text="登录 Devin", command=self._on_devin_login)
+        self.btn_devin_login = ttk.Button(row1, text="登录 Devin", style="Green.TButton",
+                                           command=self._on_devin_login)
         self.btn_devin_login.pack(side="left", padx=3, expand=True, fill="x")
 
-        row2 = ttk.Frame(btn_frame)
-        row2.pack(fill="x", pady=3)
+        row2 = ttk.Frame(btn_frame, style="Card.TFrame")
+        row2.pack(fill="x", pady=4)
 
         ttk.Label(row2, text="PAT:").pack(side="left")
         self.token_var = tk.StringVar()
-        ttk.Entry(row2, textvariable=self.token_var, width=35).pack(side="left", padx=3)
+        ttk.Entry(row2, textvariable=self.token_var, width=35).pack(side="left", padx=4)
 
-        self.btn_repos = ttk.Button(row2, text="创建仓库", command=self._on_create_repos)
+        self.btn_repos = ttk.Button(row2, text="创建仓库", style="Gray.TButton",
+                                     command=self._on_create_repos)
         self.btn_repos.pack(side="left", padx=3)
 
         # ─── 仓库选项 ─────────────
-        repo_frame = ttk.LabelFrame(self, text="仓库选项", padding=5)
-        repo_frame.pack(fill="x", padx=10, pady=5)
+        repo_frame = ttk.LabelFrame(self, text=" 仓库选项 ", padding=8)
+        repo_frame.pack(fill="x", padx=14, pady=4)
 
-        row = ttk.Frame(repo_frame)
-        row.pack(fill="x", pady=2)
+        row = ttk.Frame(repo_frame, style="Card.TFrame")
+        row.pack(fill="x", pady=3)
         ttk.Label(row, text="名称模式:", width=10).pack(side="left")
         self.repo_name_var = tk.StringVar(value="repo-{rand}")
         ttk.Entry(row, textvariable=self.repo_name_var, width=25).pack(side="left")
         ttk.Label(row, text="  数量:").pack(side="left")
         self.repo_count_var = tk.IntVar(value=1)
-        ttk.Spinbox(row, from_=1, to=100, textvariable=self.repo_count_var, width=5).pack(side="left")
+        ttk.Spinbox(row, from_=1, to=100, textvariable=self.repo_count_var,
+                     width=5).pack(side="left")
         self.public_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(row, text="公开", variable=self.public_var).pack(side="left", padx=10)
 
-        row = ttk.Frame(repo_frame)
-        row.pack(fill="x", pady=2)
+        row = ttk.Frame(repo_frame, style="Card.TFrame")
+        row.pack(fill="x", pady=3)
         ttk.Label(row, text="描述:", width=10).pack(side="left")
         self.repo_desc_var = tk.StringVar()
-        ttk.Entry(row, textvariable=self.repo_desc_var, width=45).pack(side="left", fill="x", expand=True)
+        ttk.Entry(row, textvariable=self.repo_desc_var, width=48).pack(side="left", fill="x", expand=True)
 
-        row = ttk.Frame(repo_frame)
-        row.pack(fill="x", pady=2)
+        row = ttk.Frame(repo_frame, style="Card.TFrame")
+        row.pack(fill="x", pady=3)
         ttk.Label(row, text="初始内容:", width=10).pack(side="left")
         self.init_content_var = tk.StringVar()
-        ttk.Entry(row, textvariable=self.init_content_var, width=45).pack(side="left", fill="x", expand=True)
+        ttk.Entry(row, textvariable=self.init_content_var, width=48).pack(side="left", fill="x", expand=True)
 
         # ─── 日志 ─────────────
-        log_frame = ttk.LabelFrame(self, text="日志", padding=5)
-        log_frame.pack(fill="both", expand=True, padx=10, pady=(5, 10))
+        log_frame = ttk.LabelFrame(self, text=" 日志 ", padding=6)
+        log_frame.pack(fill="both", expand=True, padx=14, pady=(4, 12))
 
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=12, font=("Consolas", 10))
+        self.log_text = scrolledtext.ScrolledText(
+            log_frame, height=12, font=("Consolas", 10),
+            bg=self.INPUT_BG, fg=self.FG_DIM,
+            insertbackground=self.FG, selectbackground=self.FOCUS,
+            selectforeground="#ffffff", relief="flat",
+            borderwidth=0, highlightthickness=1,
+            highlightcolor=self.BORDER, highlightbackground=self.BORDER,
+        )
         self.log_text.pack(fill="both", expand=True)
+
+        # 日志文字标签颜色
+        self.log_text.tag_configure("ok", foreground=self.OK)
+        self.log_text.tag_configure("err", foreground=self.ERR)
+        self.log_text.tag_configure("info", foreground=self.FOCUS)
 
     def _check_deps(self):
         missing = []
