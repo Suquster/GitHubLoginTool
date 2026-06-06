@@ -322,6 +322,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 .copy-btn:hover{color:#f0f6fc;border-color:#58a6ff}
 /* History card btn */
 .hdr-row{display:flex;justify-content:space-between;align-items:center}
+/* Account Selector */
+.acct-bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;align-items:center}
+.acct-bar .ab-label{font-size:11px;color:#8b949e;white-space:nowrap}
+.acct-chip{display:flex;align-items:center;gap:6px;padding:6px 12px;background:#161b22;border:1px solid #30363d;border-radius:20px;cursor:pointer;transition:.2s;font-size:12px;color:#c9d1d9;user-select:none}
+.acct-chip:hover{border-color:#58a6ff;background:#1c2128}
+.acct-chip.active{border-color:#238636;background:#0d2818;color:#3fb950}
+.acct-chip .ac-avatar{width:20px;height:20px;border-radius:50%;background:#21262d;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#8b949e}
+.acct-chip.active .ac-avatar{background:#238636;color:#fff}
+.acct-chip .ac-name{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acct-chip .ac-user{font-size:10px;color:#8b949e}
+.acct-chip.active .ac-user{color:#3fb950}
+.acct-chip .ac-remove{font-size:10px;color:#484f58;margin-left:2px;padding:2px 4px;border-radius:3px}
+.acct-chip .ac-remove:hover{color:#f85149;background:#2d1117}
+.acct-empty{font-size:12px;color:#484f58;padding:8px 0}
 </style>
 </head>
 <body>
@@ -332,6 +346,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 </div>
 
 <div id="sbar" class="sbar"></div>
+
+<!-- 账号选择器 -->
+<div class="card" id="acctCard">
+ <h2>账号切换</h2>
+ <div class="acct-bar" id="acctBar">
+  <span class="acct-empty" id="acctEmpty">暂无已保存的账号，完成登录或 2FA 后自动保存</span>
+ </div>
+</div>
 
 <!-- 输入区 -->
 <div class="card">
@@ -499,6 +521,7 @@ async function go(){
   html+='</table></div>';
   document.getElementById('res0').innerHTML=html;
   ss('ok','全部完成');btn.disabled=false;
+  loadAccounts();
 }
 
 // ─── Tab 1: PAT ───
@@ -521,6 +544,7 @@ async function createPat(){
       ss('ok','PAT 创建成功');
       document.getElementById('repoToken').value=d.token;
       document.getElementById('res1').innerHTML='<div class="card" style="border-color:#238636"><h2 style="color:#3fb950">PAT 已生成</h2><div class="fg"><input value="'+d.token+'" readonly style="color:#3fb950;font-family:monospace"></div><button class="copy-btn" onclick="copyText(\''+d.token+'\')">复制 Token</button></div>';
+      loadAccounts();
     }else{ss('err','PAT 创建失败: '+d.error)}
   }catch(e){ss('err','网络错误: '+e.message)}
   btn.disabled=false;
@@ -578,6 +602,7 @@ async function devinAction(mode){
     if(d.success){
       ss('ok','Devin '+label+'成功');
       document.getElementById('res3').innerHTML='<div class="card" style="border-color:#238636"><p style="color:#3fb950">'+label+'成功!</p><p style="margin-top:8px;font-size:12px;color:#8b949e">URL: <a href="'+d.url+'" target="_blank" style="color:#58a6ff">'+d.url+'</a></p></div>';
+      loadAccounts();
     }else{ss('err','Devin '+label+'失败: '+d.error)}
   }catch(e){ss('err','网络错误: '+e.message)}
   btn.disabled=false;
@@ -633,10 +658,46 @@ async function loadHistory(){
 
 function fillAccount(e,p,t){document.getElementById('inp').value=e+'----'+p+(t?'----'+t:'');ss('ok','已回填到输入框')}
 
+// ─── 账号选择器 ───
+let currentAcctId=null;
+let _acctCache=[];
+async function loadAccounts(){
+  try{
+    const resp=await fetch('/api/accounts');
+    const d=await resp.json();
+    _acctCache=d.accounts||[];
+    const bar=document.getElementById('acctBar');
+    if(_acctCache.length===0){bar.innerHTML='<span class=\"acct-empty\">\u6682\u65e0\u5df2\u4fdd\u5b58\u7684\u8d26\u53f7\uff0c\u5b8c\u6210\u767b\u5f55\u6216 2FA \u540e\u81ea\u52a8\u4fdd\u5b58</span>';return}
+    let h='<span class="ab-label">已保存:</span>';
+    _acctCache.forEach(a=>{
+      const initial=(a.username||a.email||'?')[0].toUpperCase();
+      const label=a.username||a.email.split('@')[0];
+      const cls=a.id===currentAcctId?'acct-chip active':'acct-chip';
+      const hasTotp=a.totp?'✓ TOTP':'✗ 无TOTP';
+      h+='<div class="'+cls+'" data-id="'+a.id+'" onclick="selectAccountById('+a.id+')" title="'+a.email+' ('+hasTotp+')">';
+      h+='<span class="ac-avatar">'+initial+'</span>';
+      h+='<span class="ac-name">'+label+'</span>';
+      if(a.username)h+='<span class="ac-user">@'+a.username+'</span>';
+      h+='</div>';
+    });
+    bar.innerHTML=h;
+  }catch(e){}
+}
+function selectAccountById(id){
+  const a=_acctCache.find(x=>x.id===id);
+  if(!a)return;
+  currentAcctId=id;
+  document.getElementById('inp').value=a.email+'----'+a.password+(a.totp?'----'+a.totp:'');
+  loadAccounts();
+  ss('ok','已切换到: '+(a.username||a.email));
+}
+document.addEventListener('DOMContentLoaded',loadAccounts);
+
 async function delRecord(table,id){
   if(!confirm('确定删除？'))return;
   await fetch('/api/history/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({table:table,id:id})});
   loadHistory();
+  if(table==='accounts'){loadAccounts();if(currentAcctId===id)currentAcctId=null}
 }
 
 async function exportJson(type){
@@ -997,6 +1058,16 @@ def api_devin():
     except Exception as e:
         logs.append(f"错误: {e}")
         return jsonify({"success": False, "error": str(e), "logs": logs})
+
+
+@app.route("/api/accounts")
+def api_accounts():
+    """获取已保存的账号列表（用于账号选择器）"""
+    with _db() as conn:
+        accounts = [dict(r) for r in conn.execute(
+            "SELECT id, email, password, username, totp, updated FROM accounts ORDER BY updated DESC"
+        ).fetchall()]
+    return jsonify({"accounts": accounts})
 
 
 @app.route("/api/history")
