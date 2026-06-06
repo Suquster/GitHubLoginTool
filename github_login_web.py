@@ -432,8 +432,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
   <div class="btn-row">
    <button class="btn btn-g" id="dvSignup" onclick="devinAction('signup')">注册 Devin</button>
    <button class="btn btn-s" id="dvLogin" onclick="devinAction('signin')">登录 Devin</button>
+   <button class="btn btn-s" id="dvBalance" onclick="devinBalance()" style="background:#0d419d;border-color:#1f6feb">查询额度</button>
   </div>
  </div>
+ <div id="dvBalanceCard" style="display:none"></div>
  <div class="card"><h2>运行日志</h2><div class="log" id="log3">等待操作...</div></div>
  <div id="res3"></div>
 </div>
@@ -588,6 +590,43 @@ async function repoAction(action){
 }
 
 // ─── Tab 3: Devin ───
+async function devinBalance(){
+  const accounts=parseInput();if(!accounts)return;
+  const a=accounts[0];if(!a.totp){ss('err','查询额度需要 3 段格式（含 TOTP）');return}
+  const btn=document.getElementById('dvBalance');btn.disabled=true;btn.textContent='查询中...';
+  document.getElementById('log3').innerHTML='';document.getElementById('dvBalanceCard').style.display='none';
+  ss('load','正在登录 Devin 并查询额度...');
+  try{
+    const resp=await fetch('/api/devin/balance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:a.email,password:a.password,totp:a.totp})});
+    const d=await resp.json();
+    (d.logs||[]).forEach(l=>{let t='';if(l.includes('成功')||l.includes('完成'))t='ok';else if(l.includes('错误')||l.includes('失败'))t='err';else if(l.startsWith('['))t='info';al('log3',l,t)});
+    if(d.success){
+      ss('ok','额度查询成功');
+      const b=d.balance;
+      let card='<div class="card" style="border-color:#1f6feb">';
+      card+='<h2 style="color:#58a6ff">Devin 额度信息</h2>';
+      card+='<table class="rtbl"><tbody>';
+      card+='<tr><td style="color:#8b949e">套餐</td><td style="color:#3fb950;font-weight:700">'+(b.plan||'-')+'</td></tr>';
+      card+='<tr><td style="color:#8b949e">剩余余额</td><td style="color:#f0883e;font-size:18px;font-weight:700">$'+(b.remaining_balance||'0')+'</td></tr>';
+      card+='<tr><td style="color:#8b949e">每条消息限额</td><td>$'+(b.message_limit||'-')+'</td></tr>';
+      card+='<tr><td style="color:#8b949e">组织名称</td><td>'+(b.org_name||'-')+'</td></tr>';
+      card+='<tr><td style="color:#8b949e">计费周期</td><td>'+(b.cycle_start||'-')+' ~ '+(b.cycle_end||'-')+'</td></tr>';
+      card+='<tr><td style="color:#8b949e">本周期用量</td><td>$'+(b.cycle_usage||'0')+'</td></tr>';
+      if(b.sessions&&b.sessions.length){
+        card+='</tbody></table>';
+        card+='<h3 style="margin-top:12px;font-size:13px;color:#8b949e">Session 费用明细 (最近 '+b.sessions.length+' 条)</h3>';
+        card+='<table class="rtbl"><tr><th>名称</th><th>费用</th><th>创建时间</th></tr>';
+        b.sessions.forEach(s=>{
+          card+='<tr><td>'+s.name+'</td><td style="color:#f0883e">$'+s.cost+'</td><td>'+s.created+'</td></tr>';
+        });
+      }
+      card+='</tbody></table></div>';
+      document.getElementById('dvBalanceCard').innerHTML=card;
+      document.getElementById('dvBalanceCard').style.display='block';
+    }else{ss('err','查询失败: '+d.error)}
+  }catch(e){ss('err','网络错误: '+e.message)}
+  btn.disabled=false;btn.textContent='查询额度';
+}
 async function devinAction(mode){
   const accounts=parseInput();if(!accounts)return;
   const a=accounts[0];if(!a.totp){ss('err','Devin 需要 3 段格式（含 TOTP）');return}
@@ -1019,6 +1058,143 @@ def api_repo():
             logs.append(f"完成: 成功创建 {len(created)}/{count} 个仓库")
             return jsonify({"success": True, "message": f"创建 {len(created)}/{count} 个仓库", "logs": logs})
 
+    except Exception as e:
+        logs.append(f"错误: {e}")
+        return jsonify({"success": False, "error": str(e), "logs": logs})
+
+
+@app.route("/api/devin/balance", methods=["POST"])
+def api_devin_balance():
+    """查询 Devin 额度（通过 Playwright 登录 + API）"""
+    data = request.get_json()
+    email = data.get("email", "")
+    password = data.get("password", "")
+    totp = data.get("totp", "")
+    logs = []
+    try:
+        from playwright.sync_api import sync_playwright
+        logs.append("[1/4] 启动浏览器...")
+
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            context = browser.new_context()
+            page = context.new_page()
+
+            # Step 1: Go to Devin login via GitHub
+            logs.append("[2/4] 登录 Devin (GitHub OAuth)...")
+            page.goto("https://app.devin.ai/login", timeout=30000)
+            page.wait_for_load_state("networkidle", timeout=15000)
+
+            # Click "Sign in with GitHub" or "Continue with GitHub"
+            gh_btn = page.locator('button:has-text("GitHub"), a:has-text("GitHub")').first
+            if gh_btn.is_visible():
+                gh_btn.click()
+                page.wait_for_load_state("networkidle", timeout=15000)
+
+            # GitHub login if needed
+            if "github.com" in page.url:
+                login_field = page.locator('#login_field')
+                if login_field.is_visible():
+                    login_field.fill(email)
+                    page.locator('#password').fill(password)
+                    page.locator('[name="commit"]').click()
+                    page.wait_for_load_state("networkidle", timeout=15000)
+
+                # 2FA if needed
+                otp_field = page.locator('#app_totp')
+                if otp_field.is_visible():
+                    if pyotp:
+                        code = pyotp.TOTP(totp.strip().replace(' ', '')).now()
+                        otp_field.fill(code)
+                        page.wait_for_load_state("networkidle", timeout=15000)
+
+                # Authorize if needed
+                auth_btn = page.locator('button[name="authorize"]')
+                if auth_btn.is_visible():
+                    auth_btn.click()
+                    page.wait_for_load_state("networkidle", timeout=15000)
+
+            # Wait for Devin to load
+            page.wait_for_timeout(3000)
+            logs.append("[3/4] 登录成功，提取 cookies...")
+
+            # Extract cookies
+            cookies = context.cookies()
+            cookie_dict = {c["name"]: c["value"] for c in cookies if "devin" in c.get("domain", "")}
+            browser.close()
+
+        # Step 2: Use cookies to call Devin billing APIs
+        logs.append("[4/4] 查询额度 API...")
+        session = req_lib.Session()
+        for name, value in cookie_dict.items():
+            session.cookies.set(name, value, domain="app.devin.ai")
+        headers = {"Accept": "application/json"}
+        base = "https://app.devin.ai/api"
+
+        # Get org info
+        orgs_resp = session.get(f"{base}/organizations", headers=headers, timeout=10)
+        orgs = orgs_resp.json() if orgs_resp.status_code == 200 else []
+        if not orgs:
+            return jsonify({"success": False, "error": "无法获取组织信息，登录可能失败", "logs": logs})
+
+        org = orgs[0]
+        org_id = org.get("org_id", "")
+        org_name = org.get("display_name", "")
+
+        # Get subscription
+        sub_resp = session.get(f"{base}/billing/subscription", headers=headers, timeout=10)
+        sub = sub_resp.json() if sub_resp.status_code == 200 else {}
+        plan_slug = sub.get("slug", "unknown")
+
+        # Get quota usage (contains remaining balance)
+        quota_resp = session.get(f"{base}/{org_id}/billing/quota/usage", headers=headers, timeout=10)
+        quota = quota_resp.json() if quota_resp.status_code == 200 else {}
+        overage_balance = quota.get("overage_balance", 0)
+
+        # Get usage limits
+        limits_resp = session.get(f"{base}/{org_id}/billing/usage/limits", headers=headers, timeout=10)
+        limits = limits_resp.json() if limits_resp.status_code == 200 else {}
+        max_acu = limits.get("max_acu_limit", 0)
+
+        # Get usage stats
+        stats_resp = session.get(f"{base}/{org_id}/billing/usage/stats", headers=headers, timeout=10)
+        stats = stats_resp.json() if stats_resp.status_code == 200 else {}
+        cycle_start = stats.get("cycle_start", "")[:10] if stats.get("cycle_start") else "-"
+        cycle_end = stats.get("cycle_end", "")[:10] if stats.get("cycle_end") else "-"
+        cycle_usage = round(stats.get("cycle_total_acu_usage", 0), 2)
+
+        # Get session usage
+        sess_resp = session.get(f"{base}/{org_id}/billing/usage/sessions?page=0&page_size=10", headers=headers, timeout=10)
+        sess_data = sess_resp.json() if sess_resp.status_code == 200 else {}
+        sessions_list = []
+        for s in sess_data.get("sessions", []):
+            sessions_list.append({
+                "name": s.get("session_name", ""),
+                "cost": round(s.get("overage_dollars", 0), 4),
+                "created": s.get("created_at", "")[:16].replace("T", " "),
+            })
+
+        remaining = round(overage_balance, 2)
+        logs.append(f"完成! 套餐: {plan_slug.upper()}, 余额: ${remaining}")
+
+        return jsonify({
+            "success": True,
+            "balance": {
+                "plan": plan_slug.upper(),
+                "remaining_balance": remaining,
+                "message_limit": max_acu,
+                "org_name": org_name,
+                "cycle_start": cycle_start,
+                "cycle_end": cycle_end,
+                "cycle_usage": cycle_usage,
+                "sessions": sessions_list,
+            },
+            "logs": logs,
+        })
+
+    except ImportError as e:
+        logs.append(f"错误: 缺少依赖 — {e}")
+        return jsonify({"success": False, "error": "playwright 未安装", "logs": logs})
     except Exception as e:
         logs.append(f"错误: {e}")
         return jsonify({"success": False, "error": str(e), "logs": logs})
