@@ -436,6 +436,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
   </div>
  </div>
  <div id="dvBalanceCard" style="display:none"></div>
+ <div class="card">
+  <h2>消息限额管理</h2>
+  <p style="font-size:12px;color:#8b949e;margin-bottom:12px">修改或移除 Devin 每条消息的最大使用额度（当前默认 $20）</p>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+   <div style="display:flex;align-items:center;gap:4px;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:4px 8px">
+    <span style="color:#8b949e">$</span>
+    <input id="dvLimitVal" type="number" min="1" max="500" value="20" style="width:60px;background:transparent;border:none;color:#c9d1d9;font-size:14px;outline:none" />
+   </div>
+   <button class="btn btn-s btn-sm" id="dvLimitSet" onclick="devinSetLimit()">修改限额</button>
+   <button class="btn btn-d btn-sm" id="dvLimitRemove" onclick="devinRemoveLimit()">移除限额</button>
+  </div>
+ </div>
  <div class="card"><h2>运行日志</h2><div class="log" id="log3">等待操作...</div></div>
  <div id="res3"></div>
 </div>
@@ -590,6 +602,35 @@ async function repoAction(action){
 }
 
 // ─── Tab 3: Devin ───
+async function devinSetLimit(){
+  const accounts=parseInput();if(!accounts)return;
+  const a=accounts[0];if(!a.totp){ss('err','修改限额需要 3 段格式（含 TOTP）');return}
+  const val=parseInt(document.getElementById('dvLimitVal').value);
+  if(!val||val<1){ss('err','请输入有效的限额金额（>0）');return}
+  const btn=document.getElementById('dvLimitSet');btn.disabled=true;btn.textContent='修改中...';
+  ss('load','正在修改消息限额为 $'+val+'...');
+  try{
+    const resp=await fetch('/api/devin/limit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:a.email,password:a.password,totp:a.totp,limit:val})});
+    const d=await resp.json();
+    (d.logs||[]).forEach(l=>{let t='';if(l.includes('成功')||l.includes('完成'))t='ok';else if(l.includes('错误')||l.includes('失败'))t='err';else if(l.startsWith('['))t='info';al('log3',l,t)});
+    if(d.success){ss('ok','消息限额已修改为 $'+val)}else{ss('err','修改失败: '+d.error)}
+  }catch(e){ss('err','网络错误: '+e.message)}
+  btn.disabled=false;btn.textContent='修改限额';
+}
+async function devinRemoveLimit(){
+  const accounts=parseInput();if(!accounts)return;
+  const a=accounts[0];if(!a.totp){ss('err','移除限额需要 3 段格式（含 TOTP）');return}
+  if(!confirm('确认移除消息限额？这意味着 Devin 每条消息可以使用无限额度'))return;
+  const btn=document.getElementById('dvLimitRemove');btn.disabled=true;btn.textContent='移除中...';
+  ss('load','正在移除消息限额...');
+  try{
+    const resp=await fetch('/api/devin/limit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:a.email,password:a.password,totp:a.totp,limit:null})});
+    const d=await resp.json();
+    (d.logs||[]).forEach(l=>{let t='';if(l.includes('成功')||l.includes('完成'))t='ok';else if(l.includes('错误')||l.includes('失败'))t='err';else if(l.startsWith('['))t='info';al('log3',l,t)});
+    if(d.success){ss('ok','消息限额已移除');document.getElementById('dvLimitVal').value=''}else{ss('err','移除失败: '+d.error)}
+  }catch(e){ss('err','网络错误: '+e.message)}
+  btn.disabled=false;btn.textContent='移除限额';
+}
 async function devinBalance(){
   const accounts=parseInput();if(!accounts)return;
   const a=accounts[0];if(!a.totp){ss('err','查询额度需要 3 段格式（含 TOTP）');return}
@@ -1063,6 +1104,107 @@ def api_repo():
         return jsonify({"success": False, "error": str(e), "logs": logs})
 
 
+def _devin_login_and_get_session(email, password, totp, logs):
+    """Playwright 登录 Devin，返回 (requests.Session, org_id, org_name)"""
+    from playwright.sync_api import sync_playwright
+    logs.append("[1/3] 启动浏览器...")
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        context = browser.new_context()
+        page = context.new_page()
+
+        logs.append("[2/3] 登录 Devin (GitHub OAuth)...")
+        page.goto("https://app.devin.ai/login", timeout=30000)
+        page.wait_for_load_state("networkidle", timeout=15000)
+
+        gh_btn = page.locator('button:has-text("GitHub"), a:has-text("GitHub")').first
+        if gh_btn.is_visible():
+            gh_btn.click()
+            page.wait_for_load_state("networkidle", timeout=15000)
+
+        if "github.com" in page.url:
+            login_field = page.locator('#login_field')
+            if login_field.is_visible():
+                login_field.fill(email)
+                page.locator('#password').fill(password)
+                page.locator('[name="commit"]').click()
+                page.wait_for_load_state("networkidle", timeout=15000)
+
+            otp_field = page.locator('#app_totp')
+            if otp_field.is_visible():
+                if pyotp:
+                    code = pyotp.TOTP(totp.strip().replace(' ', '')).now()
+                    otp_field.fill(code)
+                    page.wait_for_load_state("networkidle", timeout=15000)
+
+            auth_btn = page.locator('button[name="authorize"]')
+            if auth_btn.is_visible():
+                auth_btn.click()
+                page.wait_for_load_state("networkidle", timeout=15000)
+
+        page.wait_for_timeout(3000)
+        logs.append("[3/3] 登录成功，提取 cookies...")
+
+        cookies = context.cookies()
+        cookie_dict = {c["name"]: c["value"] for c in cookies if "devin" in c.get("domain", "")}
+        browser.close()
+
+    session = req_lib.Session()
+    for name, value in cookie_dict.items():
+        session.cookies.set(name, value, domain="app.devin.ai")
+    headers = {"Accept": "application/json"}
+    base = "https://app.devin.ai/api"
+
+    orgs_resp = session.get(f"{base}/organizations", headers=headers, timeout=10)
+    orgs = orgs_resp.json() if orgs_resp.status_code == 200 else []
+    if not orgs:
+        return None, None, None
+
+    org = orgs[0]
+    org_id = org.get("org_id", "")
+    org_name = org.get("display_name", "")
+    return session, org_id, org_name
+
+
+@app.route("/api/devin/limit", methods=["POST"])
+def api_devin_limit():
+    """修改或移除 Devin 消息限额"""
+    data = request.get_json()
+    email = data.get("email", "")
+    password = data.get("password", "")
+    totp = data.get("totp", "")
+    limit_val = data.get("limit")  # None = remove, int = set
+    logs = []
+    try:
+        session, org_id, org_name = _devin_login_and_get_session(email, password, totp, logs)
+        if not session:
+            return jsonify({"success": False, "error": "无法获取组织信息，登录可能失败", "logs": logs})
+
+        base = "https://app.devin.ai/api"
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        body = {"max_credits": limit_val}  # None to remove
+        action = f"修改为 ${limit_val}" if limit_val else "移除"
+        logs.append(f"正在{action}消息限额...")
+
+        resp = session.post(f"{base}/{org_id}/billing/usage/limits",
+                            headers=headers, json=body, timeout=10)
+        if resp.status_code == 200:
+            result = resp.json()
+            if result.get("status") == "success":
+                logs.append(f"成功! 消息限额已{action}")
+                return jsonify({"success": True, "logs": logs})
+        logs.append(f"失败: HTTP {resp.status_code}")
+        return jsonify({"success": False, "error": f"API 返回 {resp.status_code}", "logs": logs})
+
+    except ImportError as e:
+        logs.append(f"错误: 缺少依赖 — {e}")
+        return jsonify({"success": False, "error": "playwright 未安装", "logs": logs})
+    except Exception as e:
+        logs.append(f"错误: {e}")
+        return jsonify({"success": False, "error": str(e), "logs": logs})
+
+
 @app.route("/api/devin/balance", methods=["POST"])
 def api_devin_balance():
     """查询 Devin 额度（通过 Playwright 登录 + API）"""
@@ -1072,74 +1214,13 @@ def api_devin_balance():
     totp = data.get("totp", "")
     logs = []
     try:
-        from playwright.sync_api import sync_playwright
-        logs.append("[1/4] 启动浏览器...")
-
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
-            context = browser.new_context()
-            page = context.new_page()
-
-            # Step 1: Go to Devin login via GitHub
-            logs.append("[2/4] 登录 Devin (GitHub OAuth)...")
-            page.goto("https://app.devin.ai/login", timeout=30000)
-            page.wait_for_load_state("networkidle", timeout=15000)
-
-            # Click "Sign in with GitHub" or "Continue with GitHub"
-            gh_btn = page.locator('button:has-text("GitHub"), a:has-text("GitHub")').first
-            if gh_btn.is_visible():
-                gh_btn.click()
-                page.wait_for_load_state("networkidle", timeout=15000)
-
-            # GitHub login if needed
-            if "github.com" in page.url:
-                login_field = page.locator('#login_field')
-                if login_field.is_visible():
-                    login_field.fill(email)
-                    page.locator('#password').fill(password)
-                    page.locator('[name="commit"]').click()
-                    page.wait_for_load_state("networkidle", timeout=15000)
-
-                # 2FA if needed
-                otp_field = page.locator('#app_totp')
-                if otp_field.is_visible():
-                    if pyotp:
-                        code = pyotp.TOTP(totp.strip().replace(' ', '')).now()
-                        otp_field.fill(code)
-                        page.wait_for_load_state("networkidle", timeout=15000)
-
-                # Authorize if needed
-                auth_btn = page.locator('button[name="authorize"]')
-                if auth_btn.is_visible():
-                    auth_btn.click()
-                    page.wait_for_load_state("networkidle", timeout=15000)
-
-            # Wait for Devin to load
-            page.wait_for_timeout(3000)
-            logs.append("[3/4] 登录成功，提取 cookies...")
-
-            # Extract cookies
-            cookies = context.cookies()
-            cookie_dict = {c["name"]: c["value"] for c in cookies if "devin" in c.get("domain", "")}
-            browser.close()
-
-        # Step 2: Use cookies to call Devin billing APIs
-        logs.append("[4/4] 查询额度 API...")
-        session = req_lib.Session()
-        for name, value in cookie_dict.items():
-            session.cookies.set(name, value, domain="app.devin.ai")
-        headers = {"Accept": "application/json"}
-        base = "https://app.devin.ai/api"
-
-        # Get org info
-        orgs_resp = session.get(f"{base}/organizations", headers=headers, timeout=10)
-        orgs = orgs_resp.json() if orgs_resp.status_code == 200 else []
-        if not orgs:
+        session, org_id, org_name = _devin_login_and_get_session(email, password, totp, logs)
+        if not session:
             return jsonify({"success": False, "error": "无法获取组织信息，登录可能失败", "logs": logs})
 
-        org = orgs[0]
-        org_id = org.get("org_id", "")
-        org_name = org.get("display_name", "")
+        logs.append("查询额度 API...")
+        headers = {"Accept": "application/json"}
+        base = "https://app.devin.ai/api"
 
         # Get subscription
         sub_resp = session.get(f"{base}/billing/subscription", headers=headers, timeout=10)
